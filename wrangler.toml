@@ -22,4 +22,4 @@ crons = [
 # 実際のIDは `wrangler kv namespace create NEWS_KV` 実行後に発行されるものに置き換える
 [[kv_namespaces]]
 binding = "NEWS_KV"
-id = "973db7c92a434e7ca5aaa3859847ef60"
+id = "3d335e51fee5461988205d8d61456acf"

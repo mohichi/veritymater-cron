@@ -1,12 +1,14 @@
-// veritymeter-cron Worker
-// Cron Triggerで毎朝自動実行され、主要メディアの当日ニュースをAIで取得・信憑性診断し、
-// 結果をKVストレージ（NEWS_KV）に保存する。
+// veritymeter-cron Worker（媒体ごと分割実行版）
+// Cron Triggerが「1回につき1媒体」を担当する設計に変更。
+// Anthropic APIのレート制限（1分あたり入力トークン数）に対し、
+// 複数媒体をまとめて処理すると確実に抵触するため、Cron自体を媒体数ぶん用意し、
+// 時間をずらして1媒体ずつ実行する。
 //
 // KVのbinding名は "NEWS_KV"、環境変数は "ANTHROPIC_API_KEY" を使用する想定。
+//
+// 各Cronの実行時刻と対象媒体の対応は、wrangler.toml の crons 配列の並び順と
+// 下記 MEDIA_LIST の並び順を一致させることで決めている（インデックスで対応付け）。
 
-// 対象メディア一覧
-// 注意：個別メディアのRSSやスクレイピングは行わず、AIのWeb検索機能を通じて
-// 「公開されている検索結果」を要約させる方式を採る（著作権・利用規約への配慮）。
 const MEDIA_LIST = [
   { id: "nhk", name: "NHKニュース", domain: "www3.nhk.or.jp" },
   { id: "kyodo", name: "共同通信", domain: "nordot.app" },
@@ -17,6 +19,20 @@ const MEDIA_LIST = [
   { id: "reuters", name: "ロイター（日本語版）", domain: "jp.reuters.com" },
   { id: "bunshun", name: "週刊文春デジタル", domain: "bunshun.jp" },
   { id: "shincho", name: "デイリー新潮", domain: "dailyshincho.jp" },
+];
+
+// wrangler.toml の crons 配列と同じ並び順（時刻順）。
+// scheduled() が呼ばれたとき、event.cron の値からこの配列内の位置を特定し、対応するメディアを処理する。
+const CRON_SCHEDULE = [
+  "0 21 * * *",   // nhk
+  "8 21 * * *",   // kyodo
+  "16 21 * * *",  // asahi
+  "24 21 * * *",  // yomiuri
+  "32 21 * * *",  // nikkei
+  "40 21 * * *",  // toyokeizai
+  "48 21 * * *",  // reuters
+  "56 21 * * *",  // bunshun
+  "4 22 * * *",   // shincho
 ];
 
 async function fetchMediaNews(media, apiKey, retryCount = 0) {
@@ -72,9 +88,8 @@ JSON形式：
 
     if (!apiRes.ok) {
       const errText = await apiRes.text();
-      // レート制限エラー（429）の場合、少し待って1回だけ自動リトライする
       if (apiRes.status === 429 && retryCount < 2) {
-        await new Promise(resolve => setTimeout(resolve, 60000)); // 60秒待機してリトライ
+        await new Promise(resolve => setTimeout(resolve, 30000));
         return fetchMediaNews(media, apiKey, retryCount + 1);
       }
       console.error(`API error for ${media.id}:`, errText);
@@ -115,7 +130,8 @@ JSON形式：
   }
 }
 
-async function runDailyUpdate(env) {
+// 1媒体分を処理し、その日のKVデータに「追記」する
+async function updateOneMedia(env, media) {
   const apiKey = env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     return { ok: false, error: "ANTHROPIC_API_KEY is not set" };
@@ -124,65 +140,100 @@ async function runDailyUpdate(env) {
     return { ok: false, error: "NEWS_KV binding is not set" };
   }
 
-  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD（UTC基準）
-  const results = [];
+  const today = new Date().toISOString().slice(0, 10);
+  const result = await fetchMediaNews(media, apiKey);
 
-  // メディアを順番に処理（同時並行しすぎるとレート制限にかかりやすいため直列実行）
-  // Anthropic APIの「1分あたり入力トークン数」のレート制限に抵触しないよう、
-  // 各リクエストの間に十分な間隔を空ける（web_search使用時は1リクエストあたりのトークン消費が大きいため）
-  for (let i = 0; i < MEDIA_LIST.length; i++) {
-    const media = MEDIA_LIST[i];
-    const result = await fetchMediaNews(media, apiKey);
-    results.push(result);
-    if (i < MEDIA_LIST.length - 1) {
-      await new Promise(resolve => setTimeout(resolve, 45000)); // 45秒待機
-    }
+  const existingRaw = await env.NEWS_KV.get("latest");
+  let payload;
+  try {
+    payload = existingRaw ? JSON.parse(existingRaw) : null;
+  } catch (e) {
+    payload = null;
   }
 
-  const payload = {
-    updatedAt: new Date().toISOString(),
-    date: today,
-    media: results,
-  };
+  if (!payload || payload.date !== today) {
+    payload = { updatedAt: new Date().toISOString(), date: today, media: [] };
+  }
 
-  // 当日分として保存（トップページが読みに来る）
+  const idx = payload.media.findIndex(m => m.mediaId === media.id);
+  if (idx >= 0) {
+    payload.media[idx] = result;
+  } else {
+    payload.media.push(result);
+  }
+  payload.updatedAt = new Date().toISOString();
+
   await env.NEWS_KV.put("latest", JSON.stringify(payload));
-  // 日付ごとのアーカイブとしても保存（将来の履歴機能用）
   await env.NEWS_KV.put(`archive:${today}`, JSON.stringify(payload));
 
-  return {
-    ok: true,
-    date: today,
-    mediaCount: results.length,
-    totalArticles: results.reduce((sum, r) => sum + (r.articles ? r.articles.length : 0), 0),
-    perMedia: results.map(r => ({ id: r.mediaId, articles: r.articles.length, error: r.error, errorMessage: r.errorMessage || null })),
-  };
+  return { ok: true, date: today, mediaId: media.id, articles: result.articles.length, error: result.error, errorMessage: result.errorMessage || null };
 }
 
 export default {
-  // Cron Triggerから呼ばれるハンドラ
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(runDailyUpdate(env));
+    const idx = CRON_SCHEDULE.indexOf(event.cron);
+    if (idx === -1 || !MEDIA_LIST[idx]) {
+      console.error(`Unknown cron schedule: ${event.cron}`);
+      return;
+    }
+    const media = MEDIA_LIST[idx];
+    ctx.waitUntil(
+      updateOneMedia(env, media).then(async (result) => {
+        await env.NEWS_KV.put("last_run_result", JSON.stringify(result));
+      })
+    );
   },
 
-  // 手動実行・動作確認用（ブラウザから直接アクセスして実行できる）
-  // 本番運用では認証をかけることを推奨
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+
     if (url.pathname === "/run") {
-      // 全件処理は数分かかりブラウザがタイムアウトすることがあるため、
-      // バックグラウンドで実行を開始し、すぐにレスポンスを返す。
-      // 進捗・結果は /status で確認する。
-      ctx.waitUntil(
-        runDailyUpdate(env).then(async (result) => {
-          await env.NEWS_KV.put("last_run_result", JSON.stringify(result));
-        })
-      );
+      const mediaId = url.searchParams.get("media");
+      if (!mediaId) {
+        return new Response(
+          JSON.stringify({
+            error: "media パラメータを指定してください。例: /run?media=nhk",
+            availableMedia: MEDIA_LIST.map(m => m.id),
+          }, null, 2),
+          { status: 400, headers: { "Content-Type": "application/json; charset=utf-8" } }
+        );
+      }
+      const media = MEDIA_LIST.find(m => m.id === mediaId);
+      if (!media) {
+        return new Response(
+          JSON.stringify({ error: `不明な media id: ${mediaId}`, availableMedia: MEDIA_LIST.map(m => m.id) }, null, 2),
+          { status: 400, headers: { "Content-Type": "application/json; charset=utf-8" } }
+        );
+      }
+
+      const result = await updateOneMedia(env, media);
+      return new Response(JSON.stringify(result, null, 2), {
+        status: result.ok ? 200 : 500,
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+      });
+    }
+
+    if (url.pathname === "/run-all") {
+      const apiKey = env.ANTHROPIC_API_KEY;
+      if (!apiKey || !env.NEWS_KV) {
+        return new Response(JSON.stringify({ error: "APIキーまたはKVが未設定です" }), {
+          status: 500, headers: { "Content-Type": "application/json; charset=utf-8" },
+        });
+      }
+      ctx.waitUntil((async () => {
+        for (let i = 0; i < MEDIA_LIST.length; i++) {
+          await updateOneMedia(env, MEDIA_LIST[i]);
+          if (i < MEDIA_LIST.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 30000));
+          }
+        }
+      })());
       return new Response(
-        JSON.stringify({ started: true, message: "バックグラウンドで実行を開始しました。9媒体の処理に約6〜8分かかります。/status または /last-run で結果を確認してください。" }, null, 2),
+        JSON.stringify({ started: true, message: "全媒体の順次実行をバックグラウンドで開始しました。完了まで5分程度かかります。/status で確認してください。" }, null, 2),
         { status: 202, headers: { "Content-Type": "application/json; charset=utf-8" } }
       );
     }
+
     if (url.pathname === "/last-run") {
       const data = await env.NEWS_KV.get("last_run_result");
       return new Response(data || JSON.stringify({ message: "まだ実行結果がありません" }), {
@@ -190,6 +241,7 @@ export default {
         headers: { "Content-Type": "application/json; charset=utf-8" },
       });
     }
+
     if (url.pathname === "/status") {
       const data = await env.NEWS_KV.get("latest");
       return new Response(data || "No data yet", {
@@ -197,8 +249,8 @@ export default {
         headers: { "Content-Type": "application/json; charset=utf-8" },
       });
     }
+
     if (url.pathname === "/envcheck") {
-      // 一時的なデバッグ用：env内に存在するキー名の一覧と、各値の有無のみを返す（値そのものは表示しない）
       const keys = Object.keys(env);
       const info = keys.map(k => {
         const v = env[k];
@@ -210,8 +262,9 @@ export default {
         headers: { "Content-Type": "application/json; charset=utf-8" },
       });
     }
+
     return new Response(
-      `veritymeter-cron worker. Use /run or /status or /envcheck\nReceived pathname: "${url.pathname}"\nFull URL: "${request.url}"`,
+      `veritymeter-cron worker.\n使い方:\n  /run?media=nhk  ... 1媒体だけ即時実行\n  /run-all        ... 全媒体を順次バックグラウンド実行\n  /status         ... 保存済みデータの確認\n  /last-run       ... 直近のCron実行結果\n  /envcheck       ... 環境変数の設定確認\n\n対象媒体: ${MEDIA_LIST.map(m => m.id).join(", ")}`,
       { status: 200, headers: { "Content-Type": "text/plain; charset=utf-8" } }
     );
   },

@@ -74,7 +74,7 @@ JSON形式：
       const errText = await apiRes.text();
       // レート制限エラー（429）の場合、少し待って1回だけ自動リトライする
       if (apiRes.status === 429 && retryCount < 2) {
-        await new Promise(resolve => setTimeout(resolve, 30000)); // 30秒待機してリトライ
+        await new Promise(resolve => setTimeout(resolve, 60000)); // 60秒待機してリトライ
         return fetchMediaNews(media, apiKey, retryCount + 1);
       }
       console.error(`API error for ${media.id}:`, errText);
@@ -93,10 +93,14 @@ JSON形式：
 
     let parsed;
     try {
+      if (!candidate || candidate.trim().length === 0) {
+        throw new Error("empty response");
+      }
       parsed = JSON.parse(candidate);
     } catch (e) {
-      console.error(`Parse error for ${media.id}:`, fullText.slice(0, 500));
-      return { mediaId: media.id, mediaName: media.name, articles: [], error: true, errorMessage: `JSON解析失敗: ${fullText.slice(0, 200)}` };
+      const preview = fullText && fullText.length > 0 ? fullText.slice(0, 200) : "(空のレスポンス。web検索の結果が得られなかった可能性があります)";
+      console.error(`Parse error for ${media.id}:`, preview);
+      return { mediaId: media.id, mediaName: media.name, articles: [], error: true, errorMessage: `JSON解析失敗: ${preview}` };
     }
 
     return {
@@ -131,7 +135,7 @@ async function runDailyUpdate(env) {
     const result = await fetchMediaNews(media, apiKey);
     results.push(result);
     if (i < MEDIA_LIST.length - 1) {
-      await new Promise(resolve => setTimeout(resolve, 25000)); // 25秒待機
+      await new Promise(resolve => setTimeout(resolve, 45000)); // 45秒待機
     }
   }
 
@@ -166,9 +170,23 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     if (url.pathname === "/run") {
-      const result = await runDailyUpdate(env);
-      return new Response(JSON.stringify(result, null, 2), {
-        status: result.ok ? 200 : 500,
+      // 全件処理は数分かかりブラウザがタイムアウトすることがあるため、
+      // バックグラウンドで実行を開始し、すぐにレスポンスを返す。
+      // 進捗・結果は /status で確認する。
+      ctx.waitUntil(
+        runDailyUpdate(env).then(async (result) => {
+          await env.NEWS_KV.put("last_run_result", JSON.stringify(result));
+        })
+      );
+      return new Response(
+        JSON.stringify({ started: true, message: "バックグラウンドで実行を開始しました。9媒体の処理に約6〜8分かかります。/status または /last-run で結果を確認してください。" }, null, 2),
+        { status: 202, headers: { "Content-Type": "application/json" } }
+      );
+    }
+    if (url.pathname === "/last-run") {
+      const data = await env.NEWS_KV.get("last_run_result");
+      return new Response(data || JSON.stringify({ message: "まだ実行結果がありません" }), {
+        status: 200,
         headers: { "Content-Type": "application/json" },
       });
     }

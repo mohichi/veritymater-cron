@@ -168,6 +168,19 @@ export default {
         headers: { "Content-Type": "application/json" },
       });
     }
+    if (url.pathname === "/debug") {
+      // 一時的なデバッグ用：env内に存在するキー名の一覧と、各値の有無のみを返す（値そのものは表示しない）
+      const keys = Object.keys(env);
+      const info = keys.map(k => {
+        const v = env[k];
+        const type = typeof v;
+        return { key: k, type, hasValue: !!v, length: (type === 'string' ? v.length : null) };
+      });
+      return new Response(JSON.stringify({ envKeys: info }, null, 2), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     return new Response("veritymeter-cron worker. Use /run or /status", { status: 200 });
   },
 };

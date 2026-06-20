@@ -19,7 +19,7 @@ const MEDIA_LIST = [
   { id: "shincho", name: "デイリー新潮", domain: "dailyshincho.jp" },
 ];
 
-async function fetchMediaNews(media, apiKey) {
+async function fetchMediaNews(media, apiKey, retryCount = 0) {
   const systemPrompt = `あなたはニュース調査・信憑性診断の専門AIです。
 Web検索を使って、「${media.name}」（ドメイン: ${media.domain}）が本日掲載している主要記事を調査してください。
 
@@ -72,6 +72,11 @@ JSON形式：
 
     if (!apiRes.ok) {
       const errText = await apiRes.text();
+      // レート制限エラー（429）の場合、少し待って1回だけ自動リトライする
+      if (apiRes.status === 429 && retryCount < 2) {
+        await new Promise(resolve => setTimeout(resolve, 30000)); // 30秒待機してリトライ
+        return fetchMediaNews(media, apiKey, retryCount + 1);
+      }
       console.error(`API error for ${media.id}:`, errText);
       return { mediaId: media.id, mediaName: media.name, articles: [], error: true, errorMessage: `API error (${apiRes.status}): ${errText.slice(0, 300)}` };
     }
@@ -119,13 +124,14 @@ async function runDailyUpdate(env) {
   const results = [];
 
   // メディアを順番に処理（同時並行しすぎるとレート制限にかかりやすいため直列実行）
-  // さらに、各リクエストの間に間隔を空けてレート制限を回避する
+  // Anthropic APIの「1分あたり入力トークン数」のレート制限に抵触しないよう、
+  // 各リクエストの間に十分な間隔を空ける（web_search使用時は1リクエストあたりのトークン消費が大きいため）
   for (let i = 0; i < MEDIA_LIST.length; i++) {
     const media = MEDIA_LIST[i];
     const result = await fetchMediaNews(media, apiKey);
     results.push(result);
     if (i < MEDIA_LIST.length - 1) {
-      await new Promise(resolve => setTimeout(resolve, 3000)); // 3秒待機
+      await new Promise(resolve => setTimeout(resolve, 25000)); // 25秒待機
     }
   }
 

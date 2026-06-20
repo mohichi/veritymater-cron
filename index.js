@@ -40,7 +40,7 @@ async function fetchMediaNews(media, apiKey, retryCount = 0) {
 Web検索を使って、「${media.name}」（ドメイン: ${media.domain}）が本日掲載している主要記事を調査してください。
 
 手順：
-1. "${media.domain}" のサイトで本日報じられている主要なニュース記事を、検索を使って最大10件見つける
+1. "${media.domain}" のサイトで本日報じられている主要なニュース記事を、検索を使って最大5件見つける
 2. 見つかった各記事について、タイトル・URL・簡潔な要約・信憑性スコアを判定する
 3. 必ずJSON形式のみで返答する（前置き・説明・マークダウン不要）
 
@@ -65,7 +65,7 @@ JSON形式：
 - 0-19：信憑性に重大な問題
 
 記事が見つからない、またはアクセスできない場合は {"articles": []} を返してください。
-最大10件まで、実際に確認できた記事のみを含めてください。`;
+最大5件まで、実際に確認できた記事のみを含めてください。`;
 
   try {
     const apiRes = await fetch("https://api.anthropic.com/v1/messages", {
@@ -77,7 +77,7 @@ JSON形式：
       },
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
-        max_tokens: 3000,
+        max_tokens: 2000,
         system: systemPrompt,
         messages: [
           { role: "user", content: `${media.name}（${media.domain}）の本日の主要記事を調査してください。` },
@@ -121,7 +121,7 @@ JSON形式：
     return {
       mediaId: media.id,
       mediaName: media.name,
-      articles: (parsed.articles || []).slice(0, 10),
+      articles: (parsed.articles || []).slice(0, 5),
       error: false,
     };
   } catch (e) {

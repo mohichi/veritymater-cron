@@ -1,4 +1,4 @@
- // veritymeter-cron Worker（媒体ごと分割実行版）
+// veritymeter-cron Worker（媒体ごと分割実行版）
 // Cron Triggerが「1回につき1媒体」を担当する設計に変更。
 // Anthropic APIのレート制限（1分あたり入力トークン数）に対し、
 // 複数媒体をまとめて処理すると確実に抵触するため、Cron自体を媒体数ぶん用意し、
@@ -100,11 +100,11 @@ JSON形式：
       .map((b) => b.text)
       .join("\n");
 
-    // コードブロックのマーカーと前後の空白を完全に除去
-    const clean = fullText
-      .replace(/```json\s*/g, "")
-      .replace(/```\s*/g, "")
-      .trim();
+    // コードブロックのマーカーを完全除去（改行含む）
+    let clean = fullText;
+    clean = clean.replace(/```json[\r\n]*/gi, "");
+    clean = clean.replace(/```[\r\n]*/g, "");
+    clean = clean.trim();
 
     // {"articles":から始まるJSONブロックを優先的に抽出
     let candidate = null;
@@ -112,7 +112,6 @@ JSON形式：
     if (articlesMatch) {
       candidate = articlesMatch[0];
     } else {
-      // フォールバック：最後に出現する{}ブロックを使用
       const matches = clean.match(/\{[\s\S]*\}/g);
       candidate = matches && matches.length ? matches[matches.length - 1] : clean;
     }

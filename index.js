@@ -1,4 +1,4 @@
-// veritymeter-cron Worker（媒体ごと分割実行版）
+ // veritymeter-cron Worker（媒体ごと分割実行版）
 // Cron Triggerが「1回につき1媒体」を担当する設計に変更。
 // Anthropic APIのレート制限（1分あたり入力トークン数）に対し、
 // 複数媒体をまとめて処理すると確実に抵触するため、Cron自体を媒体数ぶん用意し、
@@ -100,15 +100,19 @@ JSON形式：
       .map((b) => b.text)
       .join("\n");
 
-    // コードブロックのマーカーを除去
-    const clean = fullText.replace(/```json\s*/g, "").replace(/```/g, "").trim();
+    // コードブロックのマーカーと前後の空白を完全に除去
+    const clean = fullText
+      .replace(/```json\s*/g, "")
+      .replace(/```\s*/g, "")
+      .trim();
 
-    // {"articles":から始まるJSONを優先的に探す
+    // {"articles":から始まるJSONブロックを優先的に抽出
     let candidate = null;
-    const articlesMatch = clean.match(/\{\s*"articles"\s*:[\s\S]*\}/);
+    const articlesMatch = clean.match(/\{\s*"articles"\s*:\s*\[[\s\S]*?\]\s*\}/);
     if (articlesMatch) {
       candidate = articlesMatch[0];
     } else {
+      // フォールバック：最後に出現する{}ブロックを使用
       const matches = clean.match(/\{[\s\S]*\}/g);
       candidate = matches && matches.length ? matches[matches.length - 1] : clean;
     }
@@ -120,7 +124,7 @@ JSON形式：
       }
       parsed = JSON.parse(candidate);
     } catch (e) {
-      const preview = fullText && fullText.length > 0 ? fullText.slice(0, 200) : "(空のレスポンス。web検索の結果が得られなかった可能性があります)";
+      const preview = fullText && fullText.length > 0 ? fullText.slice(0, 800) : "(空のレスポンス。web検索の結果が得られなかった可能性があります)";
       console.error(`Parse error for ${media.id}:`, preview);
       return { mediaId: media.id, mediaName: media.name, articles: [], error: true, errorMessage: `JSON解析失敗: ${preview}` };
     }

@@ -210,6 +210,26 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
+    if (url.pathname === "/reset") {
+      // reutersなど不要な媒体を除いてKVをリセットする
+      const validIds = MEDIA_LIST.map(m => m.mediaId || m.id);
+      const existingRaw = await env.NEWS_KV.get("latest");
+      if (existingRaw) {
+        const payload = JSON.parse(existingRaw);
+        payload.media = payload.media.filter(m => validIds.includes(m.mediaId));
+        payload.updatedAt = new Date().toISOString();
+        await env.NEWS_KV.put("latest", JSON.stringify(payload));
+        return new Response(JSON.stringify({ ok: true, remaining: payload.media.map(m => m.mediaId) }, null, 2), {
+          status: 200,
+          headers: { "Content-Type": "application/json; charset=utf-8" },
+        });
+      }
+      return new Response(JSON.stringify({ ok: false, error: "No data found" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json; charset=utf-8" },
+      });
+    }
+
     if (url.pathname === "/run") {
       const mediaId = url.searchParams.get("media");
       if (!mediaId) {

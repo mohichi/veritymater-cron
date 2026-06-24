@@ -1,4 +1,4 @@
-name = "veritymeter-cron"
+name = "veritymater-cron"
 main = "index.js"
 compatibility_date = "2026-06-01"
 

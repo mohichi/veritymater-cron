@@ -11,13 +11,13 @@
 
 const MEDIA_LIST = [
   { id: "nhk", name: "NHKニュース", domain: "www3.nhk.or.jp" },
-  { id: "kyodo", name: "共同通信", domain: "kyodonews.jp" },
+  { id: "mainichi", name: "毎日新聞", domain: "mainichi.jp" },
 ];
 
 // wrangler.toml の crons 配列と同じ並び順（時刻順）。
 const CRON_SCHEDULE = [
-  "0 21 * * *",   // nhk  JST 6:00
-  "16 21 * * *",  // kyodo JST 6:16
+  "0 21 * * *",   // nhk     JST 6:00
+  "16 21 * * *",  // mainichi JST 6:16
 ];
 
 async function fetchMediaNews(media, apiKey, retryCount = 0) {

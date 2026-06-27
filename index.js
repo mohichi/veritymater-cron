@@ -12,25 +12,12 @@
 const MEDIA_LIST = [
   { id: "nhk", name: "NHKニュース", domain: "www3.nhk.or.jp" },
   { id: "kyodo", name: "共同通信", domain: "nordot.app" },
-  { id: "asahi", name: "朝日新聞デジタル", domain: "asahi.com" },
-  { id: "yomiuri", name: "読売新聞オンライン", domain: "yomiuri.co.jp" },
-  { id: "nikkei", name: "日本経済新聞", domain: "nikkei.com" },
-  { id: "toyokeizai", name: "東洋経済オンライン", domain: "toyokeizai.net" },
-  { id: "bunshun", name: "週刊文春デジタル", domain: "bunshun.jp" },
-  { id: "shincho", name: "デイリー新潮", domain: "dailyshincho.jp" },
 ];
 
 // wrangler.toml の crons 配列と同じ並び順（時刻順）。
-// scheduled() が呼ばれたとき、event.cron の値からこの配列内の位置を特定し、対応するメディアを処理する。
 const CRON_SCHEDULE = [
-  "0 21 * * *",   // nhk
-  "8 21 * * *",   // kyodo
-  "16 21 * * *",  // asahi
-  "24 21 * * *",  // yomiuri
-  "32 21 * * *",  // nikkei
-  "40 21 * * *",  // toyokeizai
-  "48 21 * * *",  // bunshun
-  "56 21 * * *",  // shincho
+  "0 21 * * *",   // nhk  JST 6:00
+  "16 21 * * *",  // kyodo JST 6:16
 ];
 
 async function fetchMediaNews(media, apiKey, retryCount = 0) {

@@ -66,7 +66,7 @@ JSON形式：
         max_tokens: 1200,
         system: systemPrompt,
         messages: [
-          { role: "user", content: `${media.name}（${media.domain}）の本日の主要記事を調査してください。` },
+          { role: "user", content: `${media.name}（${media.domain}）の最新の主要記事を調査してください。本日または直近の記事を2件見つけてください。` },
         ],
         tools: [{ type: "web_search_20250305", name: "web_search" }],
       }),
